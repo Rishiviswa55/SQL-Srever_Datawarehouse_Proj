@@ -1,0 +1,280 @@
+-- ============================================================
+-- DATABASE SELECTION
+-- Switches active context to DataWarehouse so all objects
+-- are created and queried within it
+-- ============================================================
+USE DataWarehouse;
+GO
+
+-- ============================================================
+-- STORED PROCEDURE DEFINITION
+-- CREATE OR ALTER: creates fresh if not exists, or replaces
+-- if already exists. Bronze.load_Bronze lives in Bronze schema.
+-- ============================================================
+CREATE OR ALTER PROCEDURE Bronze.load_Bronze AS
+BEGIN
+
+    -- ============================================================
+    -- ETL DURATION TRACKING — VARIABLE DECLARATION
+    -- DECLARE creates in-memory variables for this execution only
+    -- @batch_start/end_time → tracks entire Bronze batch duration
+    -- @start_time / @end_time → tracks each individual table load
+    -- ============================================================
+    DECLARE @batch_start_time  DATETIME,
+            @batch_end_time    DATETIME,
+            @start_time        DATETIME,
+            @end_time          DATETIME;
+
+    -- ============================================================
+    -- BATCH START TIME CAPTURE
+    -- GETDATE() returns current system date and time.
+    -- Called BEFORE TRY so we capture time even if load fails.
+    -- ============================================================
+    SET @batch_start_time = GETDATE();
+
+    PRINT '================================================';
+    PRINT 'Loading Bronze Layer - ETL Started';
+    -- CONVERT(VARCHAR, value, 120) formats datetime → YYYY-MM-DD HH:MM:SS
+    PRINT 'Batch Start Time: ' + CONVERT(VARCHAR, @batch_start_time, 120);
+    PRINT '================================================';
+
+    -- ============================================================
+    -- TRY BLOCK — MAIN ETL LOGIC
+    -- All 6 table loads run here top to bottom.
+    -- If ANY statement fails, execution jumps immediately to CATCH.
+    -- Prevents partial loads and silent failures.
+    -- ============================================================
+    BEGIN TRY
+
+        -- --------------------------------------------------------
+        -- TABLE 1 OF 6: Bronze.crm_cust_info
+        -- Source: CRM system → customer information file
+        -- --------------------------------------------------------
+
+        -- Capture start time for this individual table
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.crm_cust_info';
+
+        -- TRUNCATE: removes all existing rows instantly.
+        -- Faster than DELETE — does not log individual row deletions.
+        -- Ensures fresh data load with no duplicates.
+        TRUNCATE TABLE Bronze.crm_cust_info;
+
+        -- BULK INSERT: loads CSV file directly into the table.
+        -- Much faster than row-by-row INSERT for large datasets.
+        BULK INSERT Bronze.crm_cust_info
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_crm\cust_info.csv'
+        WITH
+        (
+            FIRSTROW        = 2,    -- Row 1 is header, data starts at row 2
+            FIELDTERMINATOR = ',',  -- Columns separated by commas (CSV format)
+            ROWTERMINATOR   = '\n', -- Each new line = one new row
+            TABLOCK                 -- Locks entire table during load for speed
+        );
+
+        -- Capture end time and print duration for this table
+        -- DATEDIFF(SECOND, start, end) = total seconds elapsed
+        -- CAST(...AS VARCHAR) converts integer to text for PRINT
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- --------------------------------------------------------
+        -- TABLE 2 OF 6: Bronze.crm_prd_info
+        -- Source: CRM system → product information file
+        -- --------------------------------------------------------
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.crm_prd_info';
+
+        -- Empty the table before loading fresh data
+        TRUNCATE TABLE Bronze.crm_prd_info;
+
+        -- Load product data from CRM source CSV
+        BULK INSERT Bronze.crm_prd_info
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_crm\prd_info.csv'
+        WITH
+        (
+            FIRSTROW        = 2,
+            FIELDTERMINATOR = ',',
+            ROWTERMINATOR   = '\n',
+            TABLOCK
+        );
+
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- --------------------------------------------------------
+        -- TABLE 3 OF 6: Bronze.crm_sales_details
+        -- Source: CRM system → sales transactions file
+        -- --------------------------------------------------------
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.crm_sales_details';
+
+        -- Empty the table before loading fresh data
+        TRUNCATE TABLE Bronze.crm_sales_details;
+
+        -- Load sales transaction data from CRM source CSV
+        BULK INSERT Bronze.crm_sales_details
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_crm\sales_details.csv'
+        WITH
+        (
+            FIRSTROW        = 2,
+            FIELDTERMINATOR = ',',
+            ROWTERMINATOR   = '\n',
+            TABLOCK
+        );
+
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- --------------------------------------------------------
+        -- TABLE 4 OF 6: Bronze.erp_cust_az12
+        -- Source: ERP system → customer master data file
+        -- NOTE: No ROWTERMINATOR — this file uses Windows default
+        -- line ending (\r\n) which SQL Server handles automatically
+        -- --------------------------------------------------------
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.erp_cust_az12';
+
+        -- Empty the table before loading fresh data
+        TRUNCATE TABLE Bronze.erp_cust_az12;
+
+        -- Load ERP customer master data — no ROWTERMINATOR needed
+        BULK INSERT Bronze.erp_cust_az12
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_erp\CUST_AZ12.csv'
+        WITH
+        (
+            FIRSTROW        = 2,
+            FIELDTERMINATOR = ',',
+            -- No ROWTERMINATOR: file uses default \r\n line endings
+            TABLOCK
+        );
+
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- --------------------------------------------------------
+        -- TABLE 5 OF 6: Bronze.erp_loc_a101
+        -- Source: ERP system → location / geography data file
+        -- --------------------------------------------------------
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.erp_loc_a101';
+
+        -- Empty the table before loading fresh data
+        TRUNCATE TABLE Bronze.erp_loc_a101;
+
+        -- Load ERP location/geography data from source CSV
+        BULK INSERT Bronze.erp_loc_a101
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_erp\LOC_A101.csv'
+        WITH
+        (
+            FIRSTROW        = 2,
+            FIELDTERMINATOR = ',',
+            ROWTERMINATOR   = '\n',
+            TABLOCK
+        );
+
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- --------------------------------------------------------
+        -- TABLE 6 OF 6: Bronze.erp_px_cat_g1v2
+        -- Source: ERP system → product category mapping file
+        -- --------------------------------------------------------
+        SET @start_time = GETDATE();
+        PRINT '>> Truncating & Loading: Bronze.erp_px_cat_g1v2';
+
+        -- Empty the table before loading fresh data
+        TRUNCATE TABLE Bronze.erp_px_cat_g1v2;
+
+        -- Load ERP product category mapping from source CSV
+        BULK INSERT Bronze.erp_px_cat_g1v2
+        FROM 'C:\Sql_data\sql-data-warehouse-project\sql-data-warehouse-project\datasets\source_erp\PX_CAT_G1V2.csv'
+        WITH
+        (
+            FIRSTROW        = 2,
+            FIELDTERMINATOR = ',',
+            ROWTERMINATOR   = '\n',
+            TABLOCK
+        );
+
+        SET @end_time = GETDATE();
+        PRINT '   Duration: '
+              + CAST(DATEDIFF(SECOND, @start_time, @end_time) AS VARCHAR)
+              + ' second(s)';
+
+        -- ============================================================
+        -- TOTAL BATCH DURATION — SUCCESS PATH
+        -- All 6 tables loaded without error.
+        -- DATEDIFF(SECOND, batch_start, batch_end) = total wall-clock
+        -- time for the entire Bronze layer load in seconds.
+        -- ============================================================
+        SET @batch_end_time = GETDATE();
+        PRINT '================================================';
+        PRINT 'Bronze Layer Loaded Successfully!';
+        PRINT 'Batch End Time:       ' + CONVERT(VARCHAR, @batch_end_time, 120);
+        PRINT 'Total Batch Duration: '
+              + CAST(DATEDIFF(SECOND, @batch_start_time, @batch_end_time) AS VARCHAR)
+              + ' second(s)';
+        PRINT '================================================';
+
+    END TRY
+
+    -- ============================================================
+    -- CATCH BLOCK — ERROR HANDLING & VALIDATION
+    -- Triggered automatically if ANY statement in TRY fails.
+    -- Surfaces exactly what broke and where using built-in functions:
+    --   ERROR_NUMBER()  → SQL Server error code  (e.g. 4860 = file not found)
+    --   ERROR_STATE()   → sub-classification of the error type
+    --   ERROR_LINE()    → exact line number where the failure occurred
+    --   ERROR_MESSAGE() → human-readable description of what went wrong
+    -- Also prints elapsed time so you know how far batch got before failing
+    -- ============================================================
+    BEGIN CATCH
+        SET @batch_end_time = GETDATE();
+
+        PRINT '================================================';
+        PRINT 'ERROR: Bronze Layer Load FAILED!';
+        PRINT 'Failed At:    ' + CONVERT(VARCHAR, @batch_end_time, 120);
+        PRINT 'Error Number: ' + CAST(ERROR_NUMBER()  AS VARCHAR);
+        PRINT 'Error State:  ' + CAST(ERROR_STATE()   AS VARCHAR);
+        PRINT 'Error Line:   ' + CAST(ERROR_LINE()    AS VARCHAR);
+        PRINT 'Error Msg:    ' + ERROR_MESSAGE();
+        PRINT 'Time Elapsed: '
+              + CAST(DATEDIFF(SECOND, @batch_start_time, @batch_end_time) AS VARCHAR)
+              + ' second(s)';
+        PRINT '================================================';
+    END CATCH
+
+END;
+GO
+
+-- ============================================================
+-- PROCEDURE EXECUTION
+-- EXEC calls the stored procedure by full schema.name path.
+-- Triggers the entire Bronze layer load in one single command.
+-- ============================================================
+EXEC Bronze.load_Bronze;
+GO
+
+-- ============================================================
+-- VERIFICATION QUERIES
+-- SELECT * confirms data actually landed in each table.
+-- Run after EXEC to visually spot-check row counts and values.
+-- Ensures no table was accidentally left empty after the load.
+-- ============================================================
+SELECT * FROM Bronze.crm_cust_info;      -- Verify CRM customer data
+SELECT * FROM Bronze.crm_prd_info;       -- Verify CRM product data
+SELECT * FROM Bronze.crm_sales_details;  -- Verify CRM sales data
+SELECT * FROM Bronze.erp_cust_az12;      -- Verify ERP customer master
+SELECT * FROM Bronze.erp_loc_a101;       -- Verify ERP location data
+SELECT * FROM Bronze.erp_px_cat_g1v2;    -- Verify ERP product categories
